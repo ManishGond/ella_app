@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "589032959855",
+    "project_id": "ella-med-app",
+    "storage_bucket": "ella-med-app.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:589032959855:android:a7d445cd42613d8fae429a",
+        "android_client_info": {
+          "package_name": "com.example.ella_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAeNzZEaSpYkB6Paljj2UV650-gfr8EpFA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
