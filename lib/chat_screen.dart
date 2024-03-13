@@ -1,121 +1,77 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:io';
-import 'package:ella_app/config.dart';
-import 'package:file_picker/file_picker.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'package:toast/toast.dart';
 import 'dart:async';
-import 'package:url_launcher/url_launcher.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  const ChatScreen({Key? key}) : super(key: key);
 
   @override
-  // ignore: library_private_types_in_public_api
   _ChatScreenState createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final List<ChatMessage> _messages = [];
-  List<Map<String, dynamic>> pdfData = [];
   bool isServerOnline = false;
-  bool isCheckingServer = false;
-  FilePickerResult? result;
-  PlatformFile? pickedFile;
   bool isLoading = false;
+  File? _image;
+  String _response = '';
 
-  final FirebaseFirestore _firebaseFirestore = FirebaseFirestore.instance;
-  File? fileToDisplay;
-  final DatabaseReference _databaseReference =
-      // ignore: deprecated_member_use
-      FirebaseDatabase.instance.reference().child('messages');
+  Future _pickImage() async {
+    final pickedFile =
+        await ImagePicker().pickImage(source: ImageSource.gallery);
 
-  void _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'gif'],
-      type: FileType.custom,
-    );
-
-    if (result == null) return;
-
-    final file = result.files.first;
-
-    // Upload the file to Firebase Cloud Storage
-    String downloadUrl = await _uploadFile(file);
-
-    // Add the file message to the chat
-    String message = 'File Uploaded: $downloadUrl';
-    _handleSubmitted(message);
-
-    await _firebaseFirestore.collection("imgs").add({
-      "name": _getFileName(downloadUrl),
-      "url": downloadUrl,
+    setState(() {
+      if (pickedFile != null) {
+        _image = File(pickedFile.path);
+        _handleSubmitted('image'); // Add the image path as user message
+        uploadImage();
+      }
     });
   }
 
-  Future<String> _uploadFile(PlatformFile file) async {
-    try {
-      final Reference storageReference =
-          FirebaseStorage.instance.ref().child('images/${file.name}');
-
-      final UploadTask uploadTask = storageReference.putFile(File(file.path!));
-
-      // Rest of the code remains the same...
-
-      TaskSnapshot taskSnapshot = await uploadTask;
-
-      String downloadUrl = await taskSnapshot.ref.getDownloadURL();
-      await _sendToFlaskAPI(downloadUrl);
-
-      return downloadUrl;
-
-      // Rest of the code remains the same...
-    } catch (e) {
-      // Handle errors and show a toast message if needed
-      Toast.show("Error uploading file: $e",
-          duration: 5, gravity: Toast.bottom);
-      return 'Error uploading file: $e';
-    }
-  }
-
-  Future<void> _sendToFlaskAPI(String imageUrl) async {
-    try {
-      final response = await http.post(
-        Uri.parse('YOUR_FLASK_API_URL'), // Replace with your Flask API URL
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'imageUrl': imageUrl}),
+  Future uploadImage() async {
+    if (_image == null) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Error"),
+          content: const Text("Please select an image first."),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("OK"),
+            ),
+          ],
+        ),
       );
-
-      if (response.statusCode == 200) {
-        // Handle success if needed
-      } else {
-        // Handle error if needed
-        print('Error in Flask API response: ${response.body}');
-      }
-    } catch (e) {
-      // Handle errors if needed
-      print('Error sending to Flask API: $e');
+      return;
     }
-  }
+    var request = http.MultipartRequest(
+        'POST', Uri.parse('http://192.168.40.60:5000/upload')); // Updated URL
 
-// Function to handle file upload and show toast message
-  void _handleFileUpload(String downloadUrl) {
-    // Display a toast message for the filename
-    Toast.show("File Uploaded: ${_getFileName(downloadUrl)}",
-        duration: 5, gravity: Toast.bottom);
-  }
+    request.files.add(await http.MultipartFile.fromPath('file', _image!.path));
 
-// Function to extract filename from the URL
-  String _getFileName(String downloadUrl) {
-    Uri uri = Uri.parse(downloadUrl);
-    return uri.pathSegments.last;
+    try {
+      var response = await request.send();
+      var responseData = await response.stream.toBytes();
+      var responseString = utf8.decode(responseData);
+      setState(() {
+        _response = responseString;
+        _handleSubmitted(_response);
+      });
+    } catch (e) {
+      print(e.toString());
+      setState(() {
+        _response = 'Error: $e';
+      });
+    }
   }
 
   @override
@@ -124,28 +80,13 @@ class _ChatScreenState extends State<ChatScreen> {
     Timer.periodic(const Duration(seconds: 5), (timer) {
       _checkServerStatus();
     });
-    _databaseReference.onChildAdded.listen((event) {
-      Map<String, dynamic> data =
-          Map<String, dynamic>.from(event.snapshot.value as Map);
-      String text = data['text'];
-      bool isUser = data['isUser'];
-
-      ChatMessage message = ChatMessage(
-        text: text,
-        isUser: isUser,
-      );
-
-      setState(() {
-        _messages.insert(0, message);
-      });
-    });
   }
 
   Future<void> _checkServerStatus() async {
     try {
       final response = await http
           .get(
-            Uri.parse('${AppConfig.serverUrl}/status'),
+            Uri.parse('http://192.168.40.60:5000/status'), //TODO
           )
           .timeout(const Duration(seconds: 5));
 
@@ -173,15 +114,13 @@ class _ChatScreenState extends State<ChatScreen> {
     'images/background5.png',
     'images/background6.png',
   ];
-  int currentImageIndex = 3;
+  int currentImageIndex = 1;
 
   @override
   Widget build(BuildContext context) {
     ToastContext().init(context);
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
         title: Row(
           children: [
             const Text(
@@ -253,7 +192,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       Icons.add,
                       color: Colors.pink,
                     ),
-                    onPressed: _pickFile, // Handle file upload
+                    onPressed: _pickImage,
                   ),
                   Expanded(
                     child: Container(
@@ -292,25 +231,44 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleSubmitted(String text) {
     if (text.trim().isEmpty) {
-      Toast.show("Text field is empty 😂", duration: 2, gravity: Toast.bottom);
+      Toast.show("Text field is empty", duration: 2, gravity: Toast.bottom);
       return;
     }
 
     _textController.clear();
-    ChatMessage message = ChatMessage(
-      text: text,
-      isUser: true,
-    );
+    ChatMessage message;
+
+    // Check if the text is valid JSON
+    if (_isValidJson(text)) {
+      _simulateChatbotResponse(text);
+      return;
+    } else {
+      // If it's not valid JSON, treat it as a regular user message
+      message = ChatMessage(
+        text: text,
+        isUser: true,
+        image: text == 'image' ? _image : null,
+      );
+    }
+
     setState(() {
       _messages.insert(0, message);
     });
 
+    if (text == 'image') {
+      // Don't call _simulateChatbotResponse for image messages
+      return;
+    }
     _simulateChatbotResponse(text);
-    _scrollController.animateTo(
-      0.0,
-      curve: Curves.easeOut,
-      duration: const Duration(milliseconds: 300),
-    );
+  }
+
+  bool _isValidJson(String text) {
+    try {
+      jsonDecode(text);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _simulateChatbotResponse(String userMessage) async {
@@ -328,17 +286,25 @@ class _ChatScreenState extends State<ChatScreen> {
       // Simulate a delay or loading time (you can adjust the duration)
       await Future.delayed(const Duration(seconds: 3));
 
-      // Get the actual chatbot response
-      String apiResponse = await getChatbotResponse(userMessage);
+      String apiResponse;
+
+      // Check if userMessage is a JSON string
+      try {
+        final decodedJson = json.decode(userMessage);
+        apiResponse = decodedJson['response'] as String;
+      } catch (e) {
+        // If parsing fails, get the actual chatbot response
+        apiResponse = await getChatbotResponse(userMessage);
+      }
 
       // Remove the typing indicator and add the real response
       setState(() {
         _messages.removeAt(0);
-        ChatMessage message = ChatMessage(
+        ChatMessage imageMessage = ChatMessage(
           text: apiResponse,
           isUser: false,
         );
-        _messages.insert(0, message);
+        _messages.insert(0, imageMessage);
       });
 
       _scrollController.animateTo(
@@ -372,7 +338,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<String> getChatbotResponse(String message) async {
     try {
       final response = await http.post(
-        Uri.parse('${AppConfig.serverUrl}/chat'),
+        Uri.parse('http://192.168.40.60:5000/chat'), //TODO
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'message': message}),
       );
@@ -380,10 +346,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (response.statusCode == 200) {
         return jsonDecode(response.body)["response"];
       } else {
-        throw Exception('Sorry I dont understand :(');
+        throw Exception('Sorry, I don\'t understand.');
       }
     } catch (e) {
-      throw Exception('');
+      throw Exception('An error occurred: $e');
     }
   }
 
@@ -397,8 +363,10 @@ class _ChatScreenState extends State<ChatScreen> {
 class ChatMessage extends StatelessWidget {
   final String text;
   final bool isUser;
+  final File? image;
 
-  const ChatMessage({super.key, required this.text, required this.isUser});
+  const ChatMessage(
+      {Key? key, required this.text, required this.isUser, this.image});
 
   @override
   Widget build(BuildContext context) {
@@ -408,36 +376,36 @@ class ChatMessage extends StatelessWidget {
         crossAxisAlignment:
             isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: <Widget>[
-          Container(
-            padding: const EdgeInsets.all(8.0),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.7,
+          if (image != null) // Render the image if available
+            Image.file(
+              image!,
+              height: 150.0,
+              width: 150.0,
+              fit: BoxFit.cover,
             ),
-            decoration: BoxDecoration(
-              color: isUser ? Colors.blue : Colors.red.shade300,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(isUser ? 12.0 : 0.0),
-                topRight: Radius.circular(isUser ? 0.0 : 12.0),
-                bottomLeft: const Radius.circular(12.0),
-                bottomRight: const Radius.circular(12.0),
+          if (text.isNotEmpty && text != 'image')
+            Container(
+              padding: const EdgeInsets.all(8.0),
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.7,
+              ),
+              decoration: BoxDecoration(
+                color: isUser ? Colors.blue : Colors.red.shade300,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(isUser ? 12.0 : 0.0),
+                  topRight: Radius.circular(isUser ? 0.0 : 12.0),
+                  bottomLeft: const Radius.circular(12.0),
+                  bottomRight: const Radius.circular(12.0),
+                ),
+              ),
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16.0,
+                ),
               ),
             ),
-            child: Column(
-              children: [
-                if (text.startsWith(
-                    'File Uploaded:')) // Check if it's a file message
-                  _buildFileMessage(text),
-                if (!text.startsWith('File Uploaded:'))
-                  Text(
-                    text,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16.0,
-                    ),
-                  ),
-              ],
-            ),
-          ),
           const SizedBox(height: 4.0),
           Text(
             isUser ? 'You' : 'Ella',
@@ -449,60 +417,5 @@ class ChatMessage extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Widget _buildFileMessage(String text) {
-    // Parse the download URL from the message
-    String downloadUrl = text.substring('File Uploaded: '.length);
-
-    // Use Uri class to parse the download URL
-    Uri uri = Uri.parse(downloadUrl);
-
-    // Extract filename from the URL
-    String fileName = uri.pathSegments.last;
-
-    if (fileName.startsWith('imgs/')) {
-      fileName = fileName.substring('imgs/'.length);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        GestureDetector(
-          onTap: () async {
-            openBrowserURL(url: uri, inApp: true);
-          },
-          child: Container(
-            height: 100, // Adjust the height as needed
-            width: 100, // Adjust the width as needed
-            decoration: const BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage(
-                    'images/imageIcon.png'), // Replace with your PDF thumbnail
-                fit: BoxFit.fill,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8.0),
-        Text(
-          fileName, // Display the filename
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12.0,
-          ),
-        ),
-        // Display a toast message for successful upload
-        const SizedBox(height: 8.0),
-      ],
-    );
-  }
-
-  Future openBrowserURL({required Uri url, bool inApp = false}) async {
-    if (await canLaunchUrl(url)) {
-      await launchUrl(
-        url,
-      );
-    }
   }
 }

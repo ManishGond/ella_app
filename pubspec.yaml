@@ -50,6 +50,7 @@ dependencies:
   typewritertext: ^3.0.2
   pdf: ^3.10.8
   syncfusion_flutter_pdf: ^20.3.47
+  image_picker: ^1.0.7
 dev_dependencies:
   flutter_test:
     sdk: flutter
